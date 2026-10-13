@@ -16,10 +16,11 @@ Open the URL in **Safari**, tap **Share**, then **Add to Home Screen**. Launch i
 
 ## Using it
 
-- **Start** plays a character at 500 Hz. Type it on the on-screen keyboard (switch to the 123 / symbols layer for digits and punctuation).
+- **Start** plays a character at 500 Hz. Type it on the built-in keyboard: letters, digits and punctuation are all on one screen, with no shift or 123 layer. Only the blocks your pool needs are shown. Settings > Sound has a switch to use the system keyboard instead.
+- **Recall time**: each first-try answer is timed from the end of the sound. Slow and often-missed characters come up more often, and Stats lists them first.
 - **Wrong key**: soft buzzer, then the character plays again with its answer shown. Type the correct key to continue. A wrong key counts one miss, however many tries it takes.
 - **Replay** and **Reveal** are buttons on screen. Reveal counts as a miss.
-- **Speed** slider (5-40 WPM) is on the main screen. Everything else is in Settings (the sliders icon): characters grouped by length, QSO abbreviations and prosigns, pitch, volume, pause between characters, stats.
+- **Speed** slider (5-40 WPM) is on the main screen. Everything else is in Settings (the sliders icon): characters grouped by length, QSO abbreviations and prosigns, pitch, volume, pause between characters, keyboard, stats.
 
 ### Bluetooth / hardware keyboard
 

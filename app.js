@@ -125,6 +125,7 @@
       qsoRatio: Math.round(num(raw.qsoRatio, 20, 5, 100)),
       haptics: raw.haptics !== false,
       wake: raw.wake !== false,
+      keys: raw.keys !== false,
       chars: new Set(chars.filter((k) => ITEMS.get(k)?.kind === "char")),
       qso: new Set(qso.filter((k) => ITEMS.get(k)?.kind === "qso")),
     };
@@ -155,6 +156,8 @@
     }
   }
 
+  const TAIL_S = 0.15;                                   // silence after the last element
+
   function renderItem(item, wpm, freq, amp, sr) {
     const unit = 1.2 / wpm;                              // PARIS standard
     const segs = [["s", 0.1]];
@@ -165,7 +168,7 @@
         segs.push(["t", unit * (sym === "-" ? 3 : 1)]);
       });
     });
-    segs.push(["s", 0.15]);
+    segs.push(["s", TAIL_S]);
     const lens = segs.map(([, d]) => Math.round(d * sr));
     const out = new Float32Array(lens.reduce((a, b) => a + b, 0));
     let pos = 0;
@@ -353,9 +356,11 @@
     root.style.setProperty("--app-h", height + "px");
     root.style.setProperty("--app-top", top + "px");
     const kb = vv ? window.innerHeight - vv.height > 120 : false;
+    const free = height - (cfg.keys ? ui.keys.offsetHeight : 0);   // what is left above the built-in keys
+    root.style.setProperty("--free-h", free + "px");
     document.body.classList.toggle("kb-open", kb);
-    document.body.classList.toggle("compact", height < 540);
-    document.body.classList.toggle("tiny", height < 340);
+    document.body.classList.toggle("compact", free < 540);
+    document.body.classList.toggle("tiny", free < 340);
   }
 
   /* ======================================================================
@@ -365,7 +370,7 @@
     app: $("#app"), stage: $("#stage"), status: $("#status"), big: $("#big"), pattern: $("#pattern"),
     typed: $("#typed"), hint: $("#hint"), toast: $("#toast"), install: $("#install"),
     score: $("#scoreBtn"), start: $("#startBtn"), startLabel: $("#startLabel"),
-    replay: $("#replayBtn"), reveal: $("#revealBtn"), kbd: $("#kbd"),
+    replay: $("#replayBtn"), reveal: $("#revealBtn"), kbd: $("#kbd"), keys: $("#keys"),
     wpmSlider: $("#wpmSlider"), wpmValue: $("#wpmValue"),
   };
 
@@ -404,7 +409,7 @@
       ui.hint.textContent = n
         ? `${n} ${n === 1 ? "item" : "items"} in your pool. Tap Start, then type what you hear.`
         : "Turn on at least one character in Settings.";
-    } else if (!kbFocused && !sheetOpen) {
+    } else if (!cfg.keys && !kbFocused && !sheetOpen) {
       ui.hint.textContent = "Tap anywhere to bring the keyboard back.";
     } else {
       ui.hint.textContent = "Type what you hear.";
@@ -480,6 +485,18 @@
   let missed = false;
   let lastKey = null;
   let paceTimer = null;
+  let answerFrom = 0;          // performance.now() at which the item finished sounding
+
+  // Recall time: under FAST_MS is instant recognition, SLOW_MS and beyond needs the most practice.
+  const FAST_MS = 600, SLOW_MS = 2000, CAP_MS = 4000;
+  const EXTRA_KEY_MS = 300;    // typing allowance for each further letter of a multi-letter answer
+  const TIME_ALPHA = 0.3;      // weight of the newest answer in the running average
+  const fmtMs = (ms) => (ms / 1000).toFixed(2) + " s";
+
+  /** 0 = recalled instantly, 1 = slow. Items never timed sit in the middle so they get a fair share. */
+  const slowness = (s) => (s && s[3] ? clamp((s[2] - FAST_MS) / (SLOW_MS - FAST_MS), 0, 1) : 0.5);
+  const missRate = (s) => (s && s[0] ? 1 - s[1] / s[0] : 0);
+  const need = (s) => 4 * slowness(s) + 3 * missRate(s);
 
   function setState(s) { state = s; ui.stage.dataset.state = s; }
 
@@ -494,7 +511,7 @@
       const f = pool.filter((i) => i.key !== lastKey);
       if (f.length) pool = f;
     }
-    const w = pool.map((i) => 1 + (boost[i.key] || 0));
+    const w = pool.map((i) => 1 + (boost[i.key] || 0) + need(stats[i.key]));
     let r = Math.random() * w.reduce((a, b) => a + b, 0);
     for (let i = 0; i < pool.length; i++) { r -= w[i]; if (r <= 0) return pool[i]; }
     return pool[pool.length - 1];
@@ -545,7 +562,9 @@
     setBig("?", "muted");
     setPattern(null);
     setTyped("");
-    player.play(audioFor(item));
+    const audio = audioFor(item);
+    player.play(audio);
+    answerFrom = performance.now() + (audio.length / player.sr - TAIL_S + (player.ctx.outputLatency || 0)) * 1000;
   }
 
   const scheduleNext = () => {
@@ -574,9 +593,13 @@
   }
 
   function correct() {
-    if (!missed) record(true);
+    let ms = null;
+    if (!missed) {
+      ms = clamp(performance.now() - answerFrom - EXTRA_KEY_MS * (current.accept[0].length - 1), 0, CAP_MS);
+      record(true, ms);
+    }
     setState(FEEDBACK);
-    setStatus("Got it");
+    setStatus(ms === null ? "Got it" : `Got it · ${fmtMs(ms)}`);
     setBig(current.display, "ok");
     setPattern(current);
     setTyped("");
@@ -621,15 +644,21 @@
     setStatus("Now type it");
   }
 
-  function record(ok) {
+  // stats[key] = [attempts, correct, average recall ms, timed answers]
+  function record(ok, ms) {
     const k = current.key;
     const s = stats[k] || [0, 0];
     s[0] += 1;
-    if (ok) s[1] += 1;
+    if (ok) {
+      s[1] += 1;
+      s[2] = Math.round(s[3] ? s[2] + TIME_ALPHA * (ms - s[2]) : ms);
+      s[3] = (s[3] || 0) + 1;
+    }
     stats[k] = s;
     saveJSON(LS_STATS, stats);
     session.a += 1;
-    if (ok) { session.c += 1; boost[k] = (boost[k] || 0) * 0.5; }
+    if (ok) session.c += 1;
+    if (ok) { boost[k] = (boost[k] || 0) * 0.5; }
     else boost[k] = (boost[k] || 0) + 3;
     renderScore();
   }
@@ -649,7 +678,7 @@
   /* ======================================================================
      Keyboard input (on-screen keyboard and hardware keyboards)
      ====================================================================== */
-  const focusKbd = () => { try { ui.kbd.focus({ preventScroll: true }); } catch { /* ignore */ } };
+  const focusKbd = () => { if (cfg.keys) return; try { ui.kbd.focus({ preventScroll: true }); } catch { /* ignore */ } };
   const NORMALIZE = { "’": "'", "‘": "'", "ʼ": "'", "–": "-", "—": "-", "−": "-", "‐": "-", "‑": "-" };
 
   ui.kbd.addEventListener("input", (e) => {
@@ -676,11 +705,56 @@
       case "ArrowDown": case "ArrowLeft": e.preventDefault(); setWpm(cfg.wpm - 1); return;
       default:
     }
+    if (cfg.keys) {                                    // hardware keyboard alongside the built-in keys
+      if (e.key.length === 1 && !e.repeat && !/\s/.test(e.key)) {
+        e.preventDefault();
+        onTyped((NORMALIZE[e.key] || e.key).toUpperCase());
+      }
+      return;
+    }
     if (running && document.activeElement !== ui.kbd && e.key.length === 1) focusKbd();
   });
 
   // Tapping the stage brings the keyboard back if it was dismissed.
   ui.stage.addEventListener("click", () => { if (running && !sheetOpen) focusKbd(); });
+
+  /* ======================================================================
+     Built-in keys: every character in the pool on one screen, so digits and
+     punctuation never sit behind a shift or 123 layer.
+     ====================================================================== */
+  const KEY_BLOCKS = [
+    ["1234567890"],
+    ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"],
+    [".,?/=+@", "-':()!"],
+  ];
+
+  function buildKeys() {
+    const used = new Set();
+    for (const k of [...cfg.chars, ...cfg.qso]) for (const ch of ITEMS.get(k).accept[0]) used.add(ch);
+    // Whole blocks only, so a key never moves when the pool changes.
+    let blocks = KEY_BLOCKS.filter((rows) => [...rows.join("")].some((ch) => used.has(ch)));
+    if (!blocks.length) blocks = [KEY_BLOCKS[1]];
+    ui.keys.replaceChildren(...blocks.flat().map((row) =>
+      h("div", { class: "keys-row" }, [...row].map((ch) => h("button", { type: "button", class: "key", "data-k": ch }, ch)))));
+  }
+
+  function applyKeysMode() {
+    document.body.classList.toggle("keys-on", cfg.keys);
+    ui.keys.hidden = !cfg.keys;
+    if (cfg.keys) { ui.kbd.blur(); buildKeys(); }
+    syncViewport();
+    renderHint();
+  }
+
+  // pointerdown, not click: the answer registers the instant the finger lands.
+  ui.keys.addEventListener("pointerdown", (e) => {
+    const b = e.target.closest(".key");
+    if (!b) return;
+    e.preventDefault();
+    b.classList.add("down");
+    setTimeout(() => b.classList.remove("down"), 120);
+    onTyped(b.dataset.k);
+  });
 
   /* ======================================================================
      Settings sheet
@@ -721,7 +795,7 @@
     boxes.forEach((b, i) => { b.checked = on; on ? set.add(keys[i]) : set.delete(keys[i]); });
     poolChanged();
   }
-  function poolChanged() { saveCfg(); updateSummaries(); renderHint(); }
+  function poolChanged() { saveCfg(); updateSummaries(); renderHint(); if (cfg.keys) { buildKeys(); syncViewport(); } }
 
   function updateSummaries() {
     const a = $("#poolSummary"), b = $("#qsoSummary");
@@ -789,6 +863,8 @@
       onChange: (on) => { cfg.haptics = on; saveCfg(); if (on) haptics.success(); } });
     const sw2 = switchRow({ title: "Keep screen awake", sub: "While practicing", checked: cfg.wake,
       onChange: (on) => { cfg.wake = on; saveCfg(); setWake(on && running); } });
+    const sw3 = switchRow({ title: "Built-in keyboard", sub: "Letters, digits and punctuation on one screen. Turn off to use the system keyboard.", checked: cfg.keys,
+      onChange: (on) => { cfg.keys = on; saveCfg(); applyKeysMode(); } });
     pane.replaceChildren(
       section("Tone", h("div", { class: "card" },
         sliderRow({ label: "Pitch", min: 300, max: 1000, step: 10, value: cfg.toneHz, fmt: (v) => `${v} Hz`,
@@ -803,7 +879,7 @@
         sliderRow({ label: "Pause before the next character", min: 0, max: 5, step: 0.1, value: cfg.pacing,
           fmt: (v) => `${v.toFixed(1)} s`, onInput: (v) => { cfg.pacing = Math.round(v * 10) / 10; saveCfg(); } })),
         { foot: "Speed is on the main screen. Pitch and volume apply from the next character." }),
-      section("On this device", h("div", { class: "card" }, sw1.row, sw2.row)),
+      section("On this device", h("div", { class: "card" }, sw3.row, sw1.row, sw2.row)),
       section(null, h("div", { class: "card" },
         h("div", { class: "row col" }, h("div", { class: "row-title" }, "Morse Trainer"),
           h("div", { class: "row-sub" }, "Works offline once installed. Your settings and stats stay on this device."))))
@@ -816,32 +892,40 @@
     const totA = rows.reduce((s, [, v]) => s + v[0], 0), totC = rows.reduce((s, [, v]) => s + v[1], 0);
     const pct = (c, a) => (a ? Math.round((100 * c) / a) + "%" : "–");
     const tile = (num, label) => h("div", { class: "tile" }, h("div", { class: "tile-num" }, num), h("div", { class: "tile-label" }, label));
+    const times = rows.filter(([, v]) => v[3]).map(([, v]) => v[2]).sort((x, y) => x - y);
+    const median = times.length ? fmtMs(times[times.length >> 1]) : "–";
     pane.replaceChildren(section(null, h("div", { class: "card tiles" },
-      tile(pct(session.c, session.a), "This session"), tile(pct(totC, totA), "All time"), tile(String(totA), "Attempts"))));
+      tile(pct(session.c, session.a), "This session"), tile(pct(totC, totA), "All time"),
+      tile(median, "Typical recall"), tile(String(totA), "Attempts"))));
 
     if (!rows.length) {
-      pane.append(section(null, h("div", { class: "card empty" }, "No attempts yet. Start practicing and your accuracy per character shows up here.")));
+      pane.append(section(null, h("div", { class: "card empty" }, "No attempts yet. Start practicing and your accuracy and recall time per character show up here.")));
       return;
     }
-    rows.sort((x, y) => x[1][1] / x[1][0] - y[1][1] / y[1][0] || y[1][0] - x[1][0]);
-    const list = rows.map(([k, [a, c]]) => {
+    rows.sort((x, y) => need(y[1]) - need(x[1]) || y[1][0] - x[1][0]);
+    const list = rows.map(([k, v]) => {
+      const [a, c] = v;
       const p = (100 * c) / a;
       const color = p >= 90 ? "var(--green)" : p >= 70 ? "var(--orange)" : "var(--red)";
+      const slow = slowness(v);
+      const timeColor = slow < 1 / 3 ? "var(--green)" : slow < 2 / 3 ? "var(--orange)" : "var(--red)";
       return h("div", { class: "row stat-row" },
         h("span", { class: "stat-name" }, ITEMS.get(k)?.display ?? k),
         h("div", { class: "bar" }, h("i", { style: `width:${p}%;background:${color}` })),
         h("span", { class: "stat-count" }, `${c} / ${a}`),
-        h("span", { class: "stat-pct" }, Math.round(p) + "%"));
+        h("span", { class: "stat-pct" }, Math.round(p) + "%"),
+        h("span", { class: "stat-time", style: v[3] ? `color:${timeColor}` : null }, v[3] ? fmtMs(v[2]) : "–"));
     });
     pane.append(
-      section("Accuracy by item, weakest first", h("div", { class: "card" }, list)),
+      section("By item, most practice needed first", h("div", { class: "card" }, list),
+        { foot: `Recall is the time from the end of the sound to your correct answer, averaged over recent first-try answers. Slow and often-missed items come up more often; under ${fmtMs(FAST_MS)} counts as instant.` }),
       section(null, h("div", { class: "card" },
         h("button", { type: "button", class: "row danger", onclick: resetStatsPrompt }, "Reset statistics"))));
   }
 
   function resetStatsPrompt() {
     confirmSheet({
-      title: "Reset statistics?", message: "This clears accuracy for every character on this device.", confirm: "Reset statistics",
+      title: "Reset statistics?", message: "This clears accuracy and recall times for every character on this device.", confirm: "Reset statistics",
       onConfirm: () => { stats = {}; saveJSON(LS_STATS, stats); buildStats(); },
     });
   }
@@ -967,7 +1051,7 @@
 
   initSpeedSlider();
   initSheet();
-  syncViewport();
+  applyKeysMode();
   renderControls();
   renderScore();
   renderHint();

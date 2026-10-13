@@ -148,7 +148,7 @@ button:disabled { cursor: default; }
 
 /* ---------- Stage ---------- */
 .stage {
-  --big-size: clamp(64px, min(calc(var(--app-h) * 0.28), 40vw), 220px);
+  --big-size: clamp(64px, min(calc(var(--free-h, var(--app-h)) * 0.28), 40vw), 220px);
   position: relative;
   flex: 1;
   min-height: 0;
@@ -286,6 +286,32 @@ button:disabled { cursor: default; }
 .primary .i-pause { display: none; }
 .primary.running .i-play { display: none; }
 .primary.running .i-pause { display: block; }
+
+/* ---------- Built-in keys ---------- */
+.keys {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 3px calc(6px + env(safe-area-inset-bottom));
+  background: var(--fill2);
+  touch-action: none;
+}
+.keys-row { display: flex; justify-content: center; gap: 5px; }
+.key {
+  width: calc((100% - 45px) / 10);
+  max-width: 64px;
+  height: 42px;
+  border-radius: 6px;
+  background: var(--card);
+  box-shadow: 0 1px 0 var(--sep);
+  font: 500 21px/1 var(--font-round);
+  touch-action: none;
+}
+.key.down { background: var(--blue); color: #fff; }
+body.keys-on .controls { padding-bottom: 8px; }
+@media (max-height: 700px) { .key { height: 38px; } }
+@media (max-height: 500px) { .keys { gap: 4px; padding-top: 4px; } .key { height: 28px; font-size: 17px; } }
 
 body.kb-open #app { padding-bottom: 0; }
 body.kb-open .controls { padding-bottom: 8px; }
@@ -526,17 +552,17 @@ input[type="range"]::-moz-range-progress { height: 4px; border-radius: 2px; back
 input[type="range"]::-moz-range-thumb { width: 28px; height: 28px; border: 0; border-radius: 50%; background: #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2); }
 
 /* Stats */
-.tiles { display: grid; grid-template-columns: repeat(3, 1fr); }
-.tile { padding: 14px 8px; text-align: center; }
+.tiles { display: grid; grid-template-columns: repeat(4, 1fr); }
+.tile { padding: 14px 4px; text-align: center; }
 .tile + .tile { border-left: 0.5px solid var(--sep); }
-.tile-num { font: 700 26px/1.1 var(--font-round); font-variant-numeric: tabular-nums; }
+.tile-num { font: 700 21px/1.1 var(--font-round); font-variant-numeric: tabular-nums; }
 .tile-label { margin-top: 2px; font-size: 12px; color: var(--label2); }
-.stat-row { display: grid; grid-template-columns: 54px 1fr 64px 44px; align-items: center; gap: 10px; }
+.stat-row { display: grid; grid-template-columns: 48px 1fr 54px 40px 52px; align-items: center; gap: 8px; }
 .stat-name { font: 600 16px var(--mono); }
 .bar { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; }
 .bar i { display: block; height: 100%; border-radius: 3px; }
 .stat-count { text-align: right; font-size: 13px; color: var(--label2); font-variant-numeric: tabular-nums; }
-.stat-pct { text-align: right; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.stat-pct, .stat-time { text-align: right; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .empty { padding: 28px 20px; text-align: center; color: var(--label2); }
 
 /* ---------- Action sheet ---------- */
