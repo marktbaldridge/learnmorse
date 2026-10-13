@@ -19,8 +19,11 @@ Open the URL in **Safari**, tap **Share**, then **Add to Home Screen**. Launch i
 - **Start** plays a character at 500 Hz. Type it on the built-in keyboard: letters, digits and punctuation are all on one screen, with no shift or 123 layer. Only the blocks your pool needs are shown. Settings > Sound has a switch to use the system keyboard instead.
 - **Recall time**: each first-try answer is timed from the end of the sound. Slow and often-missed characters come up more often, and Stats lists them first.
 - **Wrong key**: soft buzzer, then the character plays again with its answer shown. Type the correct key to continue. A wrong key counts one miss, however many tries it takes.
+- **Daily streak**: the bar under the title shows your streak and progress toward today's goal (50 first-try correct answers by default; change it in Settings > Options). Every 7 days in a row earns a freeze, up to 2, which covers one missed day.
+- **Mastery map** (Stats): one tile per character, grey to red to orange to green by recent accuracy and recall time. A green tile fades when it has not come up for 14 days.
+- **Reminder**: Settings > Options > Add daily reminder to Calendar downloads a repeating calendar event with an alert. The app has no server, so it cannot send notifications itself.
 - **Replay** and **Reveal** are buttons on screen. Reveal counts as a miss.
-- **Speed** slider (5-40 WPM) is on the main screen. Everything else is in Settings (the sliders icon): characters grouped by length, QSO abbreviations and prosigns, pitch, volume, pause between characters, keyboard, stats.
+- **Speed** slider (5-40 WPM) is on the main screen. Everything else is in Settings (the sliders icon): characters grouped by length, QSO abbreviations and prosigns, pitch, volume, pause between characters, keyboard, daily goal, stats.
 
 ### Bluetooth / hardware keyboard
 

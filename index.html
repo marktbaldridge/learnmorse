@@ -33,6 +33,15 @@
     </button>
   </header>
 
+  <button id="todayBtn" class="today" type="button" data-done="false">
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+      <path d="M12.6 2.2c.5 3.5 5.2 5.7 5.2 10.9a5.8 5.8 0 0 1-11.6 0c0-2 .8-3.6 2-4.8.1 1.6.8 2.7 1.9 3.2 0-3.6.7-6.8 2.5-9.3z"/>
+    </svg>
+    <span id="streakNum" class="streak-num">0</span>
+    <span class="today-bar"><i id="todayFill"></i></span>
+    <span id="todayCount" class="today-count"></span>
+  </button>
+
   <main id="stage" class="stage" data-state="idle">
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
     <div id="status" class="status">Ready</div>
@@ -107,7 +116,7 @@
       <i class="seg-thumb"></i>
       <button type="button" role="tab" data-tab="chars" aria-selected="true">Characters</button>
       <button type="button" role="tab" data-tab="qso" aria-selected="false">QSO</button>
-      <button type="button" role="tab" data-tab="sound" aria-selected="false">Sound</button>
+      <button type="button" role="tab" data-tab="sound" aria-selected="false">Options</button>
       <button type="button" role="tab" data-tab="stats" aria-selected="false">Stats</button>
     </div>
   </div>

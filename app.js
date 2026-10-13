@@ -109,6 +109,7 @@
      ====================================================================== */
   const LS_CFG = "morse.config.v1";
   const LS_STATS = "morse.stats.v1";
+  const LS_DAYS = "morse.days.v1";
   const LS_INSTALL = "morse.installHintDismissed";
   const DEFAULT_CHARS = [..."ETIANMSURWDKGOHVFLPJBXCYZQ"];
 
@@ -126,6 +127,8 @@
       haptics: raw.haptics !== false,
       wake: raw.wake !== false,
       keys: raw.keys !== false,
+      goal: Math.round(num(raw.goal, 50, 10, 300)),
+      remindAt: /^\d\d:\d\d$/.test(raw.remindAt) ? raw.remindAt : "19:00",
       chars: new Set(chars.filter((k) => ITEMS.get(k)?.kind === "char")),
       qso: new Set(qso.filter((k) => ITEMS.get(k)?.kind === "qso")),
     };
@@ -135,6 +138,33 @@
 
   let stats = loadJSON(LS_STATS, {});
   if (typeof stats !== "object" || Array.isArray(stats)) stats = {};
+
+  // days[day number] = [first-try correct answers, daily goal met (0/1)]
+  let days = loadJSON(LS_DAYS, {});
+  if (typeof days !== "object" || Array.isArray(days)) days = {};
+  /** Local calendar day as a whole number, so consecutive days differ by one. */
+  const today = () => { const d = new Date(); return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 864e5; };
+
+  const FREEZE_EVERY = 7, FREEZE_MAX = 2;
+  /** Walk the whole history: every FREEZE_EVERY days of a run earns a freeze, and a freeze covers one missed day. */
+  function streakInfo() {
+    const t = today(), frozen = new Set();
+    const met = Object.keys(days).filter((d) => days[d]?.[1]).map(Number);
+    let cur = 0, best = 0, freezes = 0;
+    for (let d = Math.min(t, ...met); d <= t; d++) {
+      if (days[d]?.[1]) {
+        cur += 1;
+        best = Math.max(best, cur);
+        if (cur % FREEZE_EVERY === 0) freezes = Math.min(FREEZE_MAX, freezes + 1);
+      } else if (d === t) {
+        break;                                           // today can still be done
+      } else if (cur && freezes) {
+        freezes -= 1;
+        frozen.add(d);
+      } else cur = 0;
+    }
+    return { cur, best, freezes, frozen, doneToday: !!days[t]?.[1] };
+  }
 
   const session = { a: 0, c: 0 };
   const boost = {};            // extra draw weight for recently missed items
@@ -369,6 +399,7 @@
   const ui = {
     app: $("#app"), stage: $("#stage"), status: $("#status"), big: $("#big"), pattern: $("#pattern"),
     typed: $("#typed"), hint: $("#hint"), toast: $("#toast"), install: $("#install"),
+    today: $("#todayBtn"), streakNum: $("#streakNum"), todayFill: $("#todayFill"), todayCount: $("#todayCount"),
     score: $("#scoreBtn"), start: $("#startBtn"), startLabel: $("#startLabel"),
     replay: $("#replayBtn"), reveal: $("#revealBtn"), kbd: $("#kbd"), keys: $("#keys"),
     wpmSlider: $("#wpmSlider"), wpmValue: $("#wpmValue"),
@@ -427,6 +458,28 @@
   function renderScore() {
     const { a, c } = session;
     ui.score.textContent = a ? `${c}/${a} · ${Math.round((100 * c) / a)}%` : "Stats";
+  }
+
+  function renderToday() {
+    const n = days[today()]?.[0] || 0, info = streakInfo();
+    const left = Math.max(1, cfg.goal - n);
+    ui.today.dataset.done = String(info.doneToday);
+    ui.streakNum.textContent = info.cur;
+    ui.todayFill.style.width = (info.doneToday ? 1 : clamp(n / cfg.goal, 0, 1)) * 100 + "%";
+    ui.todayCount.textContent = info.doneToday ? "Goal done" : info.cur ? `${left} to keep your streak` : `${n} / ${cfg.goal} today`;
+    ui.today.setAttribute("aria-label", `${info.cur}-day streak. ${info.doneToday ? "Today's goal is done" : `${left} more correct for today's goal`}. Open stats.`);
+  }
+
+  /** Mark today done once the goal is reached. */
+  function checkGoal(celebrate) {
+    const d = days[today()];
+    if (!d || d[1] || d[0] < cfg.goal) return;
+    d[1] = 1;
+    saveJSON(LS_DAYS, days);
+    if (!celebrate) return;
+    const { cur } = streakInfo();
+    toast(`Daily goal done · ${cur}-day streak`);
+    ui.today.classList.remove("pop"); void ui.today.offsetWidth; ui.today.classList.add("pop");
   }
 
   let toastTimer = null;
@@ -491,12 +544,27 @@
   const FAST_MS = 600, SLOW_MS = 2000, CAP_MS = 4000;
   const EXTRA_KEY_MS = 300;    // typing allowance for each further letter of a multi-letter answer
   const TIME_ALPHA = 0.3;      // weight of the newest answer in the running average
+  const ACC_ALPHA = 0.2;       // same, for recent accuracy
   const fmtMs = (ms) => (ms / 1000).toFixed(2) + " s";
 
   /** 0 = recalled instantly, 1 = slow. Items never timed sit in the middle so they get a fair share. */
   const slowness = (s) => (s && s[3] ? clamp((s[2] - FAST_MS) / (SLOW_MS - FAST_MS), 0, 1) : 0.5);
-  const missRate = (s) => (s && s[0] ? 1 - s[1] / s[0] : 0);
-  const need = (s) => 4 * slowness(s) + 3 * missRate(s);
+  const recentAcc = (s) => s[5] ?? s[1] / s[0];
+  const missRate = (s) => (s && s[0] ? 1 - recentAcc(s) : 0);
+
+  // Mastery: green needs MASTER_ACC right, recall under MASTER_MS, and a few timed answers to prove it.
+  const MASTER_ACC = 0.9, WEAK_ACC = 0.7, MASTER_MIN = 3, STALE_DAYS = 14;
+  const MASTER_MS = FAST_MS + (SLOW_MS - FAST_MS) / 3, WEAK_MS = FAST_MS + (2 * (SLOW_MS - FAST_MS)) / 3;
+  function level(s) {
+    if (!s || !s[0]) return "new";
+    const acc = recentAcc(s), ms = s[3] ? s[2] : MASTER_MS;      // never timed: orange at best
+    if (acc < WEAK_ACC || ms >= WEAK_MS) return "red";
+    if (acc < MASTER_ACC || ms >= MASTER_MS || s[3] < MASTER_MIN) return "orange";
+    return "green";
+  }
+  /** Mastered, but not heard for a while: due for review. */
+  const stale = (s) => level(s) === "green" && s[4] != null && today() - s[4] >= STALE_DAYS;
+  const need = (s) => 4 * slowness(s) + 3 * missRate(s) + (stale(s) ? 1.5 : 0);
 
   function setState(s) { state = s; ui.stage.dataset.state = s; }
 
@@ -644,10 +712,12 @@
     setStatus("Now type it");
   }
 
-  // stats[key] = [attempts, correct, average recall ms, timed answers]
+  // stats[key] = [attempts, correct, average recall ms, timed answers, day last practised, recent accuracy 0..1]
   function record(ok, ms) {
-    const k = current.key;
+    const k = current.key, t = today();
     const s = stats[k] || [0, 0];
+    s[5] = Math.round((s[0] ? recentAcc(s) + ACC_ALPHA * ((ok ? 1 : 0) - recentAcc(s)) : ok ? 1 : 0) * 1000) / 1000;
+    s[4] = t;
     s[0] += 1;
     if (ok) {
       s[1] += 1;
@@ -657,7 +727,14 @@
     stats[k] = s;
     saveJSON(LS_STATS, stats);
     session.a += 1;
-    if (ok) session.c += 1;
+    if (ok) {
+      session.c += 1;
+      const d = days[t] || (days[t] = [0, 0]);
+      d[0] += 1;
+      saveJSON(LS_DAYS, days);
+      checkGoal(true);
+      renderToday();
+    }
     if (ok) { boost[k] = (boost[k] || 0) * 0.5; }
     else boost[k] = (boost[k] || 0) + 3;
     renderScore();
@@ -865,7 +942,15 @@
       onChange: (on) => { cfg.wake = on; saveCfg(); setWake(on && running); } });
     const sw3 = switchRow({ title: "Built-in keyboard", sub: "Letters, digits and punctuation on one screen. Turn off to use the system keyboard.", checked: cfg.keys,
       onChange: (on) => { cfg.keys = on; saveCfg(); applyKeysMode(); } });
+    const time = h("input", { type: "time", value: cfg.remindAt, "aria-label": "Reminder time" });
+    time.addEventListener("change", () => { if (time.value) { cfg.remindAt = time.value; saveCfg(); } });
     pane.replaceChildren(
+      section("Daily practice", h("div", { class: "card" },
+        sliderRow({ label: "Daily goal", min: 10, max: 300, step: 10, value: cfg.goal, fmt: (v) => `${v} correct`,
+          onInput: (v) => { cfg.goal = v; saveCfg(); checkGoal(false); renderToday(); } }),
+        h("label", { class: "row" }, h("span", { class: "grow" }, "Remind me at"), time),
+        h("button", { type: "button", class: "row", onclick: addReminder }, "Add daily reminder to Calendar")),
+        { foot: "Only first-try answers count toward the goal. The reminder is a repeating calendar event with an alert and a link back here. It goes off every day, practiced or not; delete the event in Calendar to stop it." }),
       section("Tone", h("div", { class: "card" },
         sliderRow({ label: "Pitch", min: 300, max: 1000, step: 10, value: cfg.toneHz, fmt: (v) => `${v} Hz`,
           onInput: (v) => { cfg.toneHz = v; saveCfg(); } }),
@@ -886,6 +971,62 @@
     );
   }
 
+  /** A repeating calendar event with an alert: the only reminder a server-less web app can set. */
+  function addReminder() {
+    const [hh, mm] = cfg.remindAt.split(":");
+    const d = new Date(), p = (n) => String(n).padStart(2, "0");
+    const ics = [
+      "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Morse Trainer//EN",
+      "BEGIN:VEVENT", "UID:daily-practice@morse-trainer",
+      `DTSTAMP:${d.toISOString().replace(/[-:]|\.\d+/g, "")}`,
+      `DTSTART:${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}T${hh}${mm}00`,   // floating: follows the device's time zone
+      "DURATION:PT5M", "RRULE:FREQ=DAILY", "SUMMARY:Morse practice",
+      "DESCRIPTION:A few minutes keeps the streak alive.", `URL:${new URL("./", location.href).href}`,
+      "BEGIN:VALARM", "ACTION:DISPLAY", "DESCRIPTION:Morse practice", "TRIGGER:PT0S", "END:VALARM",
+      "END:VEVENT", "END:VCALENDAR",
+    ].join("\r\n");
+    const url = URL.createObjectURL(new Blob([ics], { type: "text/calendar" }));
+    const a = h("a", { href: url, download: "morse-practice.ics" });
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+
+  function buildStreak() {
+    const t = today(), info = streakInfo();
+    const tile = (num, label) => h("div", { class: "tile" }, h("div", { class: "tile-num" }, num), h("div", { class: "tile-label" }, label));
+    const dots = [];
+    for (let d = t - 13; d <= t; d++) {
+      const state = days[d]?.[1] ? "met" : info.frozen.has(d) ? "frozen" : d === t ? "today" : "miss";
+      dots.push(h("div", { class: "day", "data-s": state }, h("i"), "SMTWTFS"[new Date(d * 864e5).getUTCDay()]));
+    }
+    return section("Streak", h("div", { class: "card" },
+      h("div", { class: "tiles three" }, tile(String(info.cur), "Day streak"),
+        tile(String(info.best), "Best"), tile(String(info.freezes), info.freezes === 1 ? "Freeze" : "Freezes")),
+      h("div", { class: "days", "aria-hidden": "true" }, dots)),
+      { foot: `A day counts when you get ${cfg.goal} right on the first try. Every ${FREEZE_EVERY} days in a row earns a freeze (up to ${FREEZE_MAX}), which covers one missed day and shows in blue.` });
+  }
+
+  function buildMap() {
+    const detail = h("p", { class: "map-detail" }, "Tap a tile for details.");
+    const names = { new: "Not practiced yet", red: "Needs work", orange: "Getting there", green: "Mastered" };
+    const cell = (item) => {
+      const s = stats[item.key], lv = level(s), old = stale(s);
+      const text = () => `${item.display}  ${patternText(item)}  ·  ${old ? "Due for review" : names[lv]}` + (lv === "new" ? ""
+        : `  ·  ${Math.round(recentAcc(s) * 100)}% lately${s[3] ? `, ${fmtMs(s[2])} recall` : ""}, ${s[0]} ${s[0] === 1 ? "attempt" : "attempts"}`);
+      return h("button", { type: "button", class: "cell" + (item.kind === "qso" ? " wide" : ""), "data-l": lv, "data-stale": old || null,
+        "aria-label": `${item.display}, ${old ? "due for review" : names[lv]}`, onclick: () => { detail.textContent = text(); } }, item.display);
+    };
+    const grids = CHAR_GROUPS.map(([, chars]) => h("div", { class: "map" }, [...chars].map((c) => cell(ITEMS.get(c)))));
+    const qso = [...ITEMS.values()].filter((i) => i.kind === "qso" && (cfg.qso.has(i.key) || stats[i.key]?.[0]));
+    if (qso.length) grids.push(h("div", { class: "map" }, qso.map(cell)));
+    const pool = [...cfg.chars, ...cfg.qso];
+    const done = pool.filter((k) => level(stats[k]) === "green").length;
+    return section(`Mastery map · ${done} of ${pool.length} in your pool mastered`, h("div", { class: "card map-card" }, grids, detail),
+      { foot: `Green: at least ${MASTER_ACC * 100}% right lately and recalled in under ${fmtMs(MASTER_MS)}. Orange: getting there. Red: slow or often missed. Grey: not practiced yet. A faded tile has not come up for ${STALE_DAYS} days and is due for review.` });
+  }
+
   function buildStats() {
     const pane = $("#pane-stats");
     const rows = Object.entries(stats).filter(([, v]) => v && v[0] > 0);
@@ -896,7 +1037,8 @@
     const median = times.length ? fmtMs(times[times.length >> 1]) : "–";
     pane.replaceChildren(section(null, h("div", { class: "card tiles" },
       tile(pct(session.c, session.a), "This session"), tile(pct(totC, totA), "All time"),
-      tile(median, "Typical recall"), tile(String(totA), "Attempts"))));
+      tile(median, "Typical recall"), tile(String(totA), "Attempts"))),
+      buildStreak(), buildMap());
 
     if (!rows.length) {
       pane.append(section(null, h("div", { class: "card empty" }, "No attempts yet. Start practicing and your accuracy and recall time per character show up here.")));
@@ -1022,7 +1164,7 @@
      Wire-up
      ====================================================================== */
   // Keep taps on buttons from moving focus away from the hidden input (desktop browsers).
-  document.querySelectorAll(".controls button, .nav button").forEach((b) =>
+  document.querySelectorAll(".controls button, .nav button, .today").forEach((b) =>
     b.addEventListener("mousedown", (e) => e.preventDefault()));
 
   ui.start.addEventListener("click", () => setRunning(!running));
@@ -1030,9 +1172,13 @@
   ui.reveal.addEventListener("click", () => { onReveal(); if (running) focusKbd(); });
   $("#settingsBtn").addEventListener("click", () => openSheet("chars"));
   ui.score.addEventListener("click", () => openSheet("stats"));
+  ui.today.addEventListener("click", () => openSheet("stats"));
 
   // Pause when the app goes to the background; iOS suspends audio there anyway.
-  document.addEventListener("visibilitychange", () => { if (document.hidden && running) setRunning(false); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && running) setRunning(false);
+    if (!document.hidden) renderToday();               // the day may have changed while away
+  });
   window.addEventListener("pagehide", () => { if (running) setRunning(false); });
 
   if (window.visualViewport) {
@@ -1054,6 +1200,7 @@
   applyKeysMode();
   renderControls();
   renderScore();
+  renderToday();
   renderHint();
   setBig("?", "muted");
 

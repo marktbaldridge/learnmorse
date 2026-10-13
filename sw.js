@@ -1,7 +1,7 @@
 /* Morse Trainer service worker: precache the app shell, then serve
    stale-while-revalidate so the app opens instantly and works offline.
    Bump CACHE when you change files and want old caches purged. */
-const CACHE = "morse-trainer-v2";
+const CACHE = "morse-trainer-v3";
 const SHELL = [
   "./",
   "./index.html",
