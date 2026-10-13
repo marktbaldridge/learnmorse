@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Morse Trainer</title>
+<meta name="description" content="Practice copying Morse code by ear.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Morse">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="format-detection" content="telephone=no">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="stylesheet" href="style.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<noscript>Morse Trainer needs JavaScript.</noscript>
+
+<div id="app">
+  <header class="nav">
+    <button id="scoreBtn" class="nav-link" type="button">Stats</button>
+    <h1 class="nav-title">Morse Trainer</h1>
+    <button id="settingsBtn" class="nav-icon" type="button" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+        <path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>
+      </svg>
+    </button>
+  </header>
+
+  <main id="stage" class="stage" data-state="idle">
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="status" class="status">Ready</div>
+    <div id="big" class="big" data-tone="muted">?</div>
+    <div id="pattern" class="pattern" data-tone="" aria-hidden="true"></div>
+    <div id="typed" class="typed" aria-live="polite"></div>
+    <div id="hint" class="hint"></div>
+    <div id="install" class="install" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 3v12M8 7l4-4 4 4M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/>
+      </svg>
+      <p>Install for full screen and offline use: tap <b>Share</b>, then <b>Add to Home Screen</b>.</p>
+      <button id="installClose" type="button" aria-label="Dismiss">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+  </main>
+
+  <section class="speed" aria-label="Speed">
+    <span class="speed-label">Speed</span>
+    <div id="wpmSlider" class="slider" role="slider" aria-label="Speed in words per minute"
+         aria-valuemin="5" aria-valuemax="40" aria-valuenow="20">
+      <div class="slider-track"><div class="slider-fill"></div></div>
+      <div class="slider-thumb"></div>
+    </div>
+    <span id="wpmValue" class="speed-value">20 WPM</span>
+  </section>
+
+  <footer class="controls">
+    <div class="ctl">
+      <button id="replayBtn" class="ctl-btn" type="button" aria-label="Replay" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4.5 12a7.5 7.5 0 1 0 2.4-5.5"/><path d="M4 3.5v4.2h4.2"/>
+        </svg>
+      </button>
+      <span>Replay</span>
+    </div>
+    <div class="ctl">
+      <button id="startBtn" class="ctl-btn primary" type="button" aria-label="Start">
+        <svg class="i-play" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.2v13.6a.6.6 0 0 0 .9.5l11-6.8a.6.6 0 0 0 0-1L8.9 4.7a.6.6 0 0 0-.9.5z" fill="currentColor"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="5" width="4.2" height="14" rx="1.4" fill="currentColor"/><rect x="13.8" y="5" width="4.2" height="14" rx="1.4" fill="currentColor"/></svg>
+      </button>
+      <span id="startLabel">Start</span>
+    </div>
+    <div class="ctl">
+      <button id="revealBtn" class="ctl-btn" type="button" aria-label="Reveal answer" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>
+        </svg>
+      </button>
+      <span>Reveal</span>
+    </div>
+  </footer>
+</div>
+
+<!-- Hidden text field: focusing it raises the on-screen keyboard and receives hardware-keyboard input. -->
+<input id="kbd" type="text" inputmode="text" enterkeyhint="go" autocapitalize="characters"
+       autocomplete="off" autocorrect="off" spellcheck="false" aria-label="Type the character you hear">
+
+<div id="scrim" class="scrim"></div>
+<section id="sheet" class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" inert>
+  <div id="sheetHead" class="sheet-head">
+    <div class="grabber"></div>
+    <div class="sheet-bar">
+      <span></span>
+      <h2 id="sheetTitle">Settings</h2>
+      <button id="sheetDone" class="nav-link strong" type="button">Done</button>
+    </div>
+    <div id="seg" class="seg" role="tablist" style="--n:4;--i:0">
+      <i class="seg-thumb"></i>
+      <button type="button" role="tab" data-tab="chars" aria-selected="true">Characters</button>
+      <button type="button" role="tab" data-tab="qso" aria-selected="false">QSO</button>
+      <button type="button" role="tab" data-tab="sound" aria-selected="false">Sound</button>
+      <button type="button" role="tab" data-tab="stats" aria-selected="false">Stats</button>
+    </div>
+  </div>
+  <div id="sheetBody" class="sheet-body">
+    <div id="pane-chars" class="pane" role="tabpanel"></div>
+    <div id="pane-qso" class="pane" role="tabpanel" hidden></div>
+    <div id="pane-sound" class="pane" role="tabpanel" hidden></div>
+    <div id="pane-stats" class="pane" role="tabpanel" hidden></div>
+  </div>
+</section>
+</body>
+</html>
